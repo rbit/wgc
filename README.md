@@ -29,6 +29,7 @@ Each VPN connection is brought up inside an isolated namespace, which gets its o
    ```bash
    chmod +x wgc
    ```
+
 2. Move the script to a directory in your `$PATH`, such as `/usr/local/bin`:
    
    ```bash
@@ -61,33 +62,35 @@ The script parses the file and expects standard WireGuard keys.
 
 The general syntax is `wgc [command] <vpn_name>`.
 
-The script must be run with `sudo` (or as root) because it manipulates network interfaces and namespaces. 
+The script requires `sudo` or root access because it manipulates network interfaces and namespaces.
 
 ### Main Commands
 
 * **`start <vpn>`**
-    Starts the specified VPN connection. .
+  Starts the specified VPN connection.
   
   ```bash
   wgc start work-vpn
   ```
 
+  ![](images/start.png)
+
 * **`stop <vpn>`**
-    Stops the VPN connection. .
+  Stops the VPN connection.
   
   ```bash
   wgc stop work-vpn
   ```
 
 * **`status <vpn>`**
-    Shows the detailed status of the connection 
+  Shows the detailed status of the connection.
   
   ```bash
   wgc status work-vpn
   ```
 
 * **`exec <vpn> <command...>`**
-    Executes a command *inside* the VPN's namespace. 
+  Executes a command *inside* the VPN's namespace. 
   
     *Example: Check your public IP as seen by the VPN.*
   
@@ -102,18 +105,20 @@ The script must be run with `sudo` (or as root) because it manipulates network i
   ```
 
 * **`list`**
-    Lists all available `.conf` files found in `/etc/wireguard/`. 
-
+  Lists all available `.conf` files found in `/etc/wireguard/`. 
+  
   ```bash
   wgc list
   ```
 
 * **`active`**
-    Lists all *currently active* VPNs by checking for running network namespaces that contain a WireGuard interface. 
-
+  Lists all *currently active* VPNs by checking for running network namespaces that contain a WireGuard interface. 
+  
   ```bash
   wgc active
   ```
+
+
 
 ### Bash Completion
 
@@ -124,6 +129,9 @@ The script can install its own bash completion file.
    ```bash
    wgc completion
    ```
+
 2. This will create the file `/etc/bash_completion.d/wgc`. 
+
 3. Source the file or start a new shell to use the completion. 
+
 4. The script provides optional instructions for `sudoers` rules to make completion seamless. 
