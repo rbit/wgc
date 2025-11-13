@@ -253,6 +253,7 @@ _wgc_completion() {
         ;;
       sto|stop|stat|statu|status|e|ex|exe|exec)
         # Active VPNs (namespaces) list
+        local ns x
         vpns=$(
           while read -r ns x; do
             sudo ip netns exec "$ns" wg show "$ns" &>/dev/null && echo "$ns"
