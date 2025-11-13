@@ -1,0 +1,394 @@
+#!/usr/bin/bash
+[[ $UID == 0 ]] || exec sudo "$0" "$@"
+
+show_usage() {
+  cat <<EOF
+Usage: $THIS [start <vpn>|stop <vpn>|status <vpn>|active|list|exec <vpn> <command>]
+
+<vpn> should match the config file name /etc/wireguard/<vpn>.conf
+
+Commands:
+  start  - Start the VPN connection
+  stop   - Stop the VPN connection
+  status - Show VPN connection status
+  active - Show active VPN namespaces
+  list   - List config files in /etc/wireguard/
+  exec   - Execute a command in the VPN namespace
+            Example: $THIS <vpn> exec curl ifconfig.me
+
+To enable bash completion: $THIS completion
+EOF
+  exit 1
+}
+
+check_dependencies() {
+  local missing=()
+  for cmd in ip wg; do
+    command -v $cmd >/dev/null || missing+=($cmd)
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "ERROR: Missing required commands: ${missing[*]}"
+    echo "Install with: apt install wireguard-tools iproute2"
+    exit 1
+  fi
+}
+
+list_config_files() {
+  local f
+  printf "%-12s %-18s %-18s %s\n" "Name" "Address" "AllowedIPs" "Endpoint"
+  printf "%-12s %-18s %-18s %s\n" "----" "-------" "----------" "--------"
+  for f in /etc/wireguard/*.conf; do
+    f=${f##*/}; f=${f%.*}
+    [[ $f =~ wg[0-9]+ ]] && continue # exclude wg0, wg1, wg2 ...
+    parse_config_file $f
+    printf "%-12s %-18s %-18s %s\n" "$f" "$Address" "$AllowedIPs" "$Endpoint"
+  done
+}
+
+parse_config_file() {
+  local CONFIG_FILE="/etc/wireguard/$1.conf"
+
+  [[ -f "$CONFIG_FILE" ]] || { echo "Config file not found: $CONFIG_FILE"; exit 1; }
+  [[ -r "$CONFIG_FILE" ]] || { echo "Can't read file: $CONFIG_FILE"; exit 1; }
+
+  local section=""
+  while read -r key eq value; do
+      # Salta righe vuote
+      [[ -z "$key" ]] && continue
+
+      # Identifica la sezione
+      if [[ "$key" == "["* ]]; then
+          section="$key"
+          continue
+      fi
+
+      # Processa solo se c'è un "=" come secondo token
+      [[ "$eq" != "=" ]] && continue
+
+      # Estrai i valori in base alla chiave
+      process_config_line "$key" "$value" "$section"
+  done < "$CONFIG_FILE"
+
+  for k in Address PrivateKey DNS PublicKey Endpoint AllowedIPs; do
+    [[ ${!k} ]] || { echo "Missing key '$k' in file $CONFIG_FILE"; exit 1; }
+  done
+
+}
+
+show_config() {
+  for k in Address PrivateKey MTU DNS PublicKey PresharedKey Endpoint AllowedIPs PersistentKeepalive; do
+    echo "$k=${!k}"
+  done
+  echo
+}
+
+process_config_line() {
+    local key="$1"
+    local value="$2"
+    local section="$3"
+
+    case "$key" in
+        Address)
+            Address=$(extract_ipv4 "$value")
+            ;;
+        PrivateKey)
+            PrivateKey="$value"
+            ;;
+        MTU)
+            MTU="$value"
+            ;;
+        DNS)
+            DNS=$(extract_all_ipv4 "$value")
+            ;;
+        PublicKey)
+            [[ "$section" == "[Peer]" ]] && PublicKey="$value"
+            ;;
+        PresharedKey)
+            PresharedKey="$value"
+            ;;
+        Endpoint)
+            Endpoint="$value"
+            ;;
+        AllowedIPs)
+            AllowedIPs=$(extract_ipv4 "$value")
+            ;;
+        PersistentKeepalive)
+            PersistentKeepalive="$value"
+            ;;
+    esac
+}
+
+extract_ipv4() {
+    local input="$1"
+    local regex='([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?'
+
+    if [[ $input =~ $regex ]]; then
+        echo "${BASH_REMATCH[0]}"
+    fi
+}
+
+extract_all_ipv4() {
+    local input="$1"
+    local result=""
+    local regex='([0-9]{1,3}\.){3}[0-9]{1,3}'
+
+    while [[ $input =~ $regex ]]; do
+        result="$result${BASH_REMATCH[0]} "
+        # Remove found match and go on
+        input="${input/"${BASH_REMATCH[0]}"/}"
+    done
+
+    # Remove final space
+    echo "${result% }"
+}
+
+disconnect() {
+  local pids=$(ip netns pids $NAMESPACE 2>/dev/null)
+  if [[ "$pids" ]]; then
+    echo -e "Terminating processes:\n$(ps -fp $pids)"
+    kill $pids 2>/dev/null || true
+    local -i count=20
+    local bar=$(printf '%.s.' $(seq 1 $count))
+    while [[ "$pids" && count -gt 0 ]]; do
+      sleep 0.5
+      pids=$(ip netns pids $NAMESPACE 2>/dev/null)
+      count+=-1
+      echo -ne "\r${bar:1:$((count))} "
+    done
+    if ((count==0)); then
+      echo "Forcibly terminating processes (SIGKILL)"
+      kill -9 $pids 2>/dev/null || true
+      sleep 0.1
+    fi
+  fi
+  # ip netns del removes all interfaces within the namespace automatically
+  ip netns del $NAMESPACE 2>/dev/null || true
+  rm -rf /etc/netns/$NAMESPACE 2>/dev/null || true
+}
+
+show_status() {
+  if ip netns exec $NAMESPACE ip address show $DEV >/dev/null 2>&1; then
+    echo "$Y VPN is CONNECTED"
+    echo
+    ip netns exec $NAMESPACE wg show $DEV
+    echo
+    echo "Interface details:"
+    ip netns exec $NAMESPACE ip -c addr show $DEV
+    echo
+    echo "Routes:"
+    ip netns exec $NAMESPACE ip -c route show
+    echo
+    echo "Active processes in namespace $NAMESPACE:"
+    pids=$(ip netns pids $NAMESPACE 2>/dev/null)
+    [[ $pids ]] && ps -fp $pids || echo "  (none)"
+  else
+    echo "$N VPN is DISCONNECTED"
+    exit 1
+  fi
+}
+
+show_active_vpns() {
+  local ns x net
+  { read ns x # skip first namespace (id: 0)
+    while read -r ns x; do
+      if ip netns exec $ns wg show $ns &>/dev/null; then
+        read -r ns x net < <(ip netns exec $ns ip -br -c address show $ns 2>/dev/null)
+        echo $ns $net
+      fi
+    done
+  } < <(ip netns list)
+}
+
+stop_vpn() {
+  ip netns exec $NAMESPACE ip address show $DEV >/dev/null 2>&1 || {
+    echo "$N $DEV is already disconnected"
+    exit 1
+  }
+  disconnect
+  echo "$Y $DEV is now disconnected"
+}
+
+exec_in_namespace() {
+  [[ $# -eq 0 ]] && { echo "ERROR: No command specified"; show_usage; }
+  ip netns exec $NAMESPACE ip address show $DEV >/dev/null 2>&1 || {
+    echo "ERROR: VPN is not connected. Start it first with: $THIS start"
+    exit 1
+  }
+  exec ip netns exec $NAMESPACE sudo -u "${SUDO_USER:-$USER}" "$@"
+}
+
+enable_completion() {
+  local completion_file="/etc/bash_completion.d/$THIS"
+
+  cat > "$completion_file" << 'EOF'
+_wgc_completion() {
+  local cur prev commands
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  # Main commands
+  commands="start stop status active list exec"
+
+  # Complete the first arg with main commands
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+    return 0
+  fi
+
+  # Complete the second arg depending on command
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    local vpns
+    case "$prev" in
+      star|start)
+        # VPN config file list
+        local f
+        vpns=$(
+          for f in $(sudo find /etc/wireguard -maxdepth 1 -name "*.conf" -type f 2>/dev/null); do
+            f=${f##*/}; f=${f%.*}
+            [[ $f =~ wg[0-9]+ ]] && continue # exclude wg0, wg1, wg2 ...
+            echo "$f"
+          done )
+        COMPREPLY=( $(compgen -W "$vpns" -- "$cur") )
+        ;;
+      sto|stop|stat|statu|status|e|ex|exe|exec)
+        # Active VPNs (namespaces) list
+        vpns=$(
+          while read -r ns x; do
+            sudo ip netns exec "$ns" wg show "$ns" &>/dev/null && echo "$ns"
+          done 2>/dev/null < <(sudo ip netns list 2>/dev/null) )
+        COMPREPLY=( $(compgen -W "$vpns" -- "$cur") )
+        ;;
+    esac
+    return 0
+  fi
+
+  # For exec, after VPN name do complete with system commmands
+  if [[ $COMP_CWORD -gt 2 ]]; then
+    case "${COMP_WORDS[1]}" in
+      e|ex|exe|exec)
+        compopt -o default
+        COMPREPLY=()
+        ;;
+      esac
+  fi
+}
+
+complete -F _wgc_completion wgc
+EOF
+
+  chmod 644 "$completion_file"
+
+  cat << EOF
+$Y Bash completion installed to $completion_file
+
+To activate completion in current shell:
+  source $completion_file
+
+Completion will be automatically available in new shell sessions.
+
+To avoid sudo password prompt:
+  sudo visudo -f /etc/sudoers.d/wgc-completion
+  Then add:
+  %sudo ALL=(ALL) NOPASSWD: /usr/bin/find /etc/wireguard/ -maxdepth 1 -name *.conf -type f
+  %sudo ALL=(ALL) NOPASSWD: /usr/sbin/ip netns list
+  %sudo ALL=(ALL) NOPASSWD: /usr/sbin/ip netns exec * wg show *
+EOF
+}
+
+start_vpn() {
+
+  parse_config_file $DEV # get parameters from config file named $DEV
+
+  if ip netns exec $NAMESPACE ip -c address show $DEV 2>/dev/null; then
+    echo "$N $DEV is already connected"
+    echo "  To reconnect, first stop it: $THIS stop $DEV"
+    exit 1
+  fi
+
+  disconnect # Clean slate
+
+  # Create WireGuard interface
+  ip link add dev $DEV type wireguard
+
+  # Configure WireGuard
+  [[ $PresharedKey ]] && presharedkey='preshared-key <(echo "$PresharedKey")'
+  [[ $PersistentKeepalive ]] && persistentkeepalive='persistent-keepalive $PersistentKeepalive'
+  eval wg set $DEV \
+    private-key <(echo "$PrivateKey") \
+    peer "$PublicKey" $presharedkey \
+    allowed-ips "$AllowedIPs" \
+    endpoint $Endpoint \
+    $persistentkeepalive
+
+  # Create and configure namespace
+  ip netns add $NAMESPACE
+  ip link set $DEV netns $NAMESPACE
+  ip netns exec $NAMESPACE ip link set lo up
+  ip netns exec $NAMESPACE ip addr add "$Address" dev $DEV
+  [[ $MTU ]] && ip netns exec $NAMESPACE ip link set $DEV mtu $MTU
+  ip netns exec $NAMESPACE ip link set $DEV up
+  ip netns exec $NAMESPACE ip route add default dev $DEV
+
+  # Configure DNS
+  mkdir -p /etc/netns/$NAMESPACE
+  {
+    for dns in $DNS; do
+      echo "nameserver $dns"
+    done
+  } > /etc/netns/$NAMESPACE/resolv.conf
+
+  echo "$Y VPN connected successfully"
+  echo
+  ip netns exec $NAMESPACE wg show $DEV
+  echo
+  echo "Network namespace: $NAMESPACE"
+  echo
+  ip netns exec $NAMESPACE ip -c addr show $DEV
+  echo
+  ip netns exec $NAMESPACE ip -c route show
+  echo
+  echo "To run commands in the VPN namespace:"
+  echo "  $THIS $NAMESPACE exec <command>"
+  echo "  Example: $THIS $NAMESPACE exec curl ifconfig.me"
+}
+
+set -e +x
+THIS=${0##*/}
+check_dependencies
+DEV=$2
+NAMESPACE=$DEV
+N=$'\e[01;31m✗\e[m'
+Y=$'\e[01;32m✓\e[m'
+
+case "$1" in
+  star|start)
+    [[ $2 ]] || show_usage
+    start_vpn
+    ;;
+  sto|stop)
+    [[ $2 ]] || show_usage
+    stop_vpn
+    ;;
+  stat|statu|status)
+    [[ $2 ]] || show_usage
+    show_status
+    ;;
+  a|ac|act|acti|activ|active)
+    show_active_vpns
+    ;;
+  l|li|lis|list)
+    list_config_files
+    ;;
+  e|ex|exe|exec)
+    [[ $2 ]] || show_usage
+    shift; shift
+    exec_in_namespace "$@"
+    ;;
+  completion)
+    enable_completion
+    ;;
+  *)
+    show_usage
+    ;;
+esac
