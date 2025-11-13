@@ -82,12 +82,16 @@ The script requires `sudo` or root access because it manipulates network interfa
   wgc stop work-vpn
   ```
 
+  ![](images/stop.png)
+
 * **`status <vpn>`**
   Shows the detailed status of the connection.
   
   ```bash
   wgc status work-vpn
   ```
+
+  ![](images/status.png)
 
 * **`exec <vpn> <command...>`**
   Executes a command *inside* the VPN's namespace. 
@@ -104,12 +108,16 @@ The script requires `sudo` or root access because it manipulates network interfa
   wgc exec work-vpn bash
   ```
 
+  ![](images/exec.png)
+
 * **`list`**
   Lists all available `.conf` files found in `/etc/wireguard/`. 
   
   ```bash
   wgc list
   ```
+
+  ![](images/list.png)
 
 * **`active`**
   Lists all *currently active* VPNs by checking for running network namespaces that contain a WireGuard interface. 
@@ -118,6 +126,7 @@ The script requires `sudo` or root access because it manipulates network interfa
   wgc active
   ```
 
+  ![](images/active.png)
 
 
 ### Bash Completion
