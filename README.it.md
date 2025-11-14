@@ -28,7 +28,7 @@ Ogni connessione VPN viene avviata all'interno di un namespace isolato, che otti
 
 ## Installazione
 
-1. Scarica il file ![wgc](https://github.com/colemar/wgc/raw/refs/heads/main/wgc)
+1. Scarica il file [wgc](https://github.com/colemar/wgc/raw/refs/heads/main/wgc)
 
 2. Rendi lo script eseguibile:
    

@@ -28,7 +28,7 @@ Each VPN connection is brought up inside an isolated namespace, which gets its o
 
 ## Installation
 
-1. Download file ![wgc](https://github.com/colemar/wgc/raw/refs/heads/main/wgc)
+1. Download file [wgc](https://github.com/colemar/wgc/raw/refs/heads/main/wgc)
 
 2. Make the script executable:
    
