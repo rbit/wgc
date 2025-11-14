@@ -1,4 +1,6 @@
-# wgc
+# ![WireGuard](images/wireguard_logo.png) wgc - WireGuard Connection Manager
+
+![Made with Bash](https://img.shields.io/badge/Made%20with-Bash-1f425f.svg)
 
 > Run and monitor multiple isolated WireGuard tunnels using Linux network namespaces.
 
