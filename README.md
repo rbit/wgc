@@ -64,6 +64,8 @@ The general syntax is `wgc [command] <vpn_name>`.
 
 The script requires `sudo` or root access because it manipulates network interfaces and namespaces.
 
+  ![](images/wgc.png)
+
 ### Main Commands
 
 * **`start <vpn>`**
