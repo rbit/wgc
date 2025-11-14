@@ -2,6 +2,8 @@
 
 ![Made with Bash](https://img.shields.io/badge/Made%20with-Bash-1f425f.svg)
 
+**[🇬🇧 English](README.md) | [🇮🇹 Italiano](README.it.md)**
+
 > Esegui e monitora più tunnel WireGuard isolati utilizzando i namespace di rete Linux.
 
 `wgc` è uno script bash per gestire connessioni WireGuard multiple e simultanee su un sistema Linux. La sua funzionalità principale è l'uso dei **namespace di rete Linux** (`ip netns`).
