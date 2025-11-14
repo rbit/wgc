@@ -146,7 +146,7 @@ Lo script può installare il proprio file di completamento bash.
 
 2. Questo creerà il file `/etc/bash_completion.d/wgc`.
 
-3. Carica il file o avvia una nuova shell per usare il completamento.
+3. Carica il file (`source /etc/bash_completion.d/wgc`) o avvia una nuova shell per usare il completamento.
 
 4. Lo script fornisce istruzioni opzionali per le regole `sudoers` per rendere il completamento fluido.
 
