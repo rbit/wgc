@@ -28,13 +28,15 @@ Ogni connessione VPN viene avviata all'interno di un namespace isolato, che otti
 
 ## Installazione
 
-1. Rendi lo script eseguibile:
+1. Scarica il file ![wgc](https://github.com/colemar/wgc/raw/refs/heads/main/wgc)
+
+2. Rendi lo script eseguibile:
    
    ```bash
    chmod +x wgc
    ```
 
-2. Sposta lo script in una directory nel tuo `$PATH`, come `/usr/local/bin`:
+3. Sposta lo script in una directory nel tuo `$PATH`, come `/usr/local/bin`:
    
    ```bash
    sudo cp wgc /usr/local/bin/wgc
