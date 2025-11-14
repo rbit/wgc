@@ -265,14 +265,25 @@ _wgc_completion() {
   fi
 
   # For exec, after VPN name do complete with system commmands
-  if [[ $COMP_CWORD -gt 2 ]]; then
-    case "${COMP_WORDS[1]}" in
-      e|ex|exe|exec)
-        compopt -o default
-        COMPREPLY=()
-        ;;
-      esac
-  fi
+	if [[ $COMP_CWORD -gt 2 ]]; then
+		case "${COMP_WORDS[1]}" in
+			e|ex|exe|exec)
+				if declare -F _command_offset &>/dev/null; then
+					# Use advanced completion if available
+					_command_offset 3
+				else
+					# Fallback to basic completion
+					if [[ $COMP_CWORD -eq 3 ]]; then
+						COMPREPLY=( $(compgen -c -- "$cur") )
+					else
+						compopt -o default
+						COMPREPLY=()
+					fi
+				fi
+				return 0
+				;;
+		esac
+	fi
 }
 
 complete -F _wgc_completion wgc
