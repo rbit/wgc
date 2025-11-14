@@ -124,7 +124,7 @@ The script requires `sudo` or root access because it manipulates network interfa
   ![](images/list.png)
 
 * **`active`**
-  Lists all *currently active* VPNs by checking for running network namespaces that contain a WireGuard interface. 
+  Lists all *currently active* VPNs by checking for running network namespaces that contain a namesake WireGuard interface. 
   
   ```bash
   wgc active
