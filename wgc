@@ -32,7 +32,7 @@ Commands:
   active - Show active VPN namespaces
   list   - List config files in /etc/wireguard/
   exec   - Execute a command in the VPN namespace
-            Example: $THIS <vpn> exec curl ifconfig.me
+           Example: $THIS <vpn> exec curl ifconfig.me
 
 To enable bash completion: $THIS completion
 EOF
@@ -379,7 +379,7 @@ start_vpn() {
   ip netns exec $NAMESPACE ip -c route show
   echo
   echo "To run commands in the VPN namespace:"
-  echo "  $THIS $NAMESPACE exec <command>"
+  echo "  $THIS exec $NAMESPACE <command>"
   echo "  Example: $THIS $NAMESPACE exec curl ifconfig.me"
 }
 
