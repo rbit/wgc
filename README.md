@@ -148,3 +148,9 @@ The script can install its own bash completion file.
 3. Source the file or start a new shell to use the completion. 
 
 4. The script provides optional instructions for `sudoers` rules to make completion seamless. 
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).
+See the [LICENSE](LICENSE) file for details.
+
