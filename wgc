@@ -44,7 +44,7 @@ check_dependencies() {
     command -v $cmd >/dev/null || missing+=($cmd)
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "ERROR: Missing required commands: ${missing[*]}"
+    echo "$N ERROR: Missing required commands: ${missing[*]}"
     echo "Install with: apt install wireguard-tools iproute2"
     return 1
   fi
@@ -65,127 +65,99 @@ list_config_files() {
 
 parse_config_file() {
   local CONFIG_FILE="/etc/wireguard/$1.conf"
-
-  [[ -f "$CONFIG_FILE" ]] || { echo "Config file not found: $CONFIG_FILE"; return 1; }
-  [[ -r "$CONFIG_FILE" ]] || { echo "Can't read file: $CONFIG_FILE"; return 1; }
-
-  local section=""
-  while read -r key eq value; do
-      # Skip empty lines
-      [[ -z "$key" ]] && continue
-
-      # Track section
-      if [[ "$key" == "["* ]]; then
-          section="$key"
-          continue
+  [[ -f "$CONFIG_FILE" ]] || { echo "$N Config file not found: $CONFIG_FILE"; return 1; }
+  [[ -r "$CONFIG_FILE" ]] || { echo "$N Can't read file: $CONFIG_FILE"; return 1; }
+  local line n=0 section key value
+  WARNINGS=; BADSECTION=
+  while read -r line || [[ -n "$line" ]]; do # also read last line if \n is missing
+      ((n++))
+      line="${line%%#*}" # Remove comments
+      if [[ "$line" =~ ^[[:space:]]*(\[[A-Za-z0-9]+\])[[:space:]]*$ ]]; then
+        section="${BASH_REMATCH[1]}" # Track section
+        continue
       fi
-
-      # Process only if the second token is "="
-      [[ "$eq" != "=" ]] && continue
-
+      # Skip lines in bad sections (even before all sections)
+      [[ "$section" == "$BADSECTION" ]] && continue
+      # Parse key=value with flexible spacing, preserving = in value
+      if [[ "$line" =~ ^[[:space:]]*([A-Za-z0-9]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]]) ]]; then
+        key="${BASH_REMATCH[1]}"   # key without spaces
+        value="${BASH_REMATCH[2]}" # value trimmed, with = preserved
+      else # Not a key=value line
+        if [[ "$line" =~ [^[:space:]] ]]; then # also not empty
+          WARNINGS+="\nMalformed line $n: '${line:0:50}...'"
+        fi
+        continue
+      fi
       # Get values according to section/key
-      process_config_line "$key" "$value" "$section"
+      process_config_line $n "$key" "$value" "$section"
   done < "$CONFIG_FILE"
-
-  for k in Address PrivateKey DNS PublicKey Endpoint AllowedIPs; do
-    [[ ${!k} ]] || { echo "Missing key '$k' in file $CONFIG_FILE"; return 1; }
+  [[ "$WARNINGS" ]] && echo -e "$N Warnings for $CONFIG_FILE:$WARNINGS" >&2
+  local k
+  for k in Address PrivateKey PublicKey Endpoint AllowedIPs; do
+    [[ ${!k} ]] || { echo "$N ERROR: Missing required key '$k' in file $CONFIG_FILE" >&2; return 1; }
   done
-
-}
-
-show_config() {
-  for k in Address PrivateKey MTU DNS PublicKey PresharedKey Endpoint AllowedIPs PersistentKeepalive; do
-    echo "$k=${!k}"
-  done
-  echo
 }
 
 process_config_line() {
-    local key="$1"
-    local value="$2"
-    local section="$3"
+  local n="$1"
+  local key="$2"
+  local value="$3"
+  local section="$4"
 
-    case "$key" in
-        Address)
-            Address=$(extract_ipv4 "$value")
-            ;;
-        PrivateKey)
-            PrivateKey="$value"
-            ;;
-        MTU)
-            MTU="$value"
-            ;;
-        DNS)
-            DNS=$(extract_all_ipv4 "$value")
-            ;;
-        PublicKey)
-            [[ "$section" == "[Peer]" ]] && PublicKey="$value"
-            ;;
-        PresharedKey)
-            PresharedKey="$value"
-            ;;
-        Endpoint)
-            Endpoint="$value"
-            ;;
-        AllowedIPs)
-            AllowedIPs=$(extract_ipv4 "$value")
-            ;;
-        PersistentKeepalive)
-            PersistentKeepalive="$value"
-            ;;
-    esac
+  case "$section" in
+    "[Interface]")
+      case "$key" in
+        Address) Address=$(extract_ipv4 "$value") ;;
+        DNS) DNS=$(extract_all_ipv4 "$value") ;;
+        MTU) MTU="$value" ;;
+        PrivateKey) PrivateKey="$value" ;;
+        *) WARNINGS+="\nUnknown key '$key' in section '$section' at line $n" ;;
+      esac
+      ;;
+    "[Peer]")
+      case "$key" in
+        AllowedIPs) AllowedIPs=$(extract_ipv4 "$value") ;;
+        Endpoint) Endpoint="$value" ;;
+        PersistentKeepalive) PersistentKeepalive="$value" ;;
+        PresharedKey) PresharedKey="$value" ;;
+        PublicKey) PublicKey="$value" ;;
+        *) WARNINGS+="\nUnknown key '$key' in section '$section' at line $n" ;;
+      esac
+      ;;
+    *)
+      BADSECTION=$section
+      WARNINGS+="\nUnknown section '$section' at line $((n-1))"
+      ;;
+  esac
 }
 
 extract_ipv4() {
-    local input="$1"
-    local regex='([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?'
-
-    if [[ $input =~ $regex ]]; then
-        echo "${BASH_REMATCH[0]}"
-    fi
+  local input="$1"
+  local regex='([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?'
+  if [[ $input =~ $regex ]]; then
+    echo "${BASH_REMATCH[0]}"
+  fi
 }
 
 extract_all_ipv4() {
-    local input="$1"
-    local result=""
-    local regex='([0-9]{1,3}\.){3}[0-9]{1,3}'
-
-    while [[ $input =~ $regex ]]; do
-        result="$result${BASH_REMATCH[0]} "
-        # Remove found match and go on
-        input="${input/"${BASH_REMATCH[0]}"/}"
-    done
-
-    # Remove final space
-    echo "${result% }"
+  local input="$1"
+  local result=""
+  local regex='([0-9]{1,3}\.){3}[0-9]{1,3}'
+  while [[ $input =~ $regex ]]; do
+    result="$result${BASH_REMATCH[0]} "
+    # Remove found match and go on
+    input="${input/"${BASH_REMATCH[0]}"/}"
+  done
+  # Remove final space
+  echo "${result% }"
 }
 
-disconnect() {
-  local pids=$(ip netns pids $NAMESPACE 2>/dev/null)
-  if [[ "$pids" ]]; then
-    echo -e "Terminating processes:\n$(ps -fp $pids)"
-    kill $pids 2>/dev/null || true
-    local -i count=20
-    local bar=$(printf '%.s.' $(seq 1 $count))
-    while [[ "$pids" && count -gt 0 ]]; do
-      sleep 0.5
-      pids=$(ip netns pids $NAMESPACE 2>/dev/null)
-      count+=-1
-      echo -ne "\r${bar:1:$((count))} "
-    done
-    if ((count==0)); then
-      echo "Forcibly terminating processes (SIGKILL)"
-      kill -9 $pids 2>/dev/null || true
-      sleep 0.1
-    fi
-  fi
-  # ip netns del removes all interfaces within the namespace automatically
-  ip netns del $NAMESPACE 2>/dev/null || true
-  rm -rf /etc/netns/$NAMESPACE 2>/dev/null || true
+is_connected() {
+  ip netns exec $NAMESPACE ip address show $DEV &>/dev/null
 }
 
 show_status() {
-  if ip netns exec $NAMESPACE ip address show $DEV >/dev/null 2>&1; then
+  if is_connected; then
     echo "$Y $DEV VPN is CONNECTED"
     echo
     ip netns exec $NAMESPACE wg show $DEV
@@ -196,7 +168,11 @@ show_status() {
     echo "Routes:"
     ip netns exec $NAMESPACE ip -c route show
     echo
-    echo "Active processes in namespace $NAMESPACE:"
+    echo "DNS:"
+    grep -E --color '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+      /etc/netns/$NAMESPACE/resolv.conf 2>/dev/null || echo "  (none)"
+    echo
+    echo "Processes running in namespace $NAMESPACE:"
     pids=$(ip netns pids $NAMESPACE 2>/dev/null)
     [[ $pids ]] && ps -fp $pids || echo "  (none)"
   else
@@ -213,23 +189,62 @@ show_active_vpns() {
       read -r ns x net < <(ip netns exec $ns ip -br -c address show $ns 2>/dev/null)
       echo $ns $net
     fi
-  done < <(ip netns list) || true
-  $found || echo "No active VPN namespaces"
+  done < <(ip netns list 2>/dev/null) || true
+  $found || echo "$N No active VPN namespaces"
+}
+
+kill_processes() {
+  local pids=$1
+  echo -e "Terminating processes:\n$(ps -fp $pids)"
+  kill $pids &>/dev/null || true
+  # paint increasing bar for timeout
+  local h d timeout=10 # seconds
+  eval printf -v d "$'\u2591'%.0s" {1..$((timeout*2))} # timeout*2 LIGHT SHADEs in d
+  echo -ne "\033[?25l" # hide cursor
+  while [[ "$pids" && "$d" ]]; do
+    sleep 0.5
+    pids=$(ip netns pids $NAMESPACE 2>/dev/null)
+    d=${d%$'\u2591'} # remove one LIGHT SHADE
+    echo -ne "\r$h$d" # paint the bar over itself
+    h+=$'\u2588' # append a FULL BLOCK
+  done
+  echo -ne "\r\033[K\033[?25h" # delete bar and restore cursor
+  if [[ -z "$d" ]]; then # timeout
+    echo "Forcibly terminating processes (SIGKILL)"
+    kill -9 $pids &>/dev/null || true
+    sleep 0.1
+    # check again
+    pids=$(ip netns pids $NAMESPACE 2>/dev/null)
+    [[ "$pids" ]] && echo "$N Warning: processes still running: $pids"
+  fi
 }
 
 stop_vpn() {
-  ip netns exec $NAMESPACE ip address show $DEV >/dev/null 2>&1 || {
+  local force=$1
+  is_connected || {
     echo "$N $DEV is already disconnected"
     return 0
   }
-  disconnect
+  local pids=$(ip netns pids $NAMESPACE 2>/dev/null)
+  if [[ "$pids" ]]; then
+    if [[ "$force" == force ]]; then
+      kill_processes "$pids"
+    else
+      echo -e "$N Processes running in namespace $NAMESPACE:\n$(ps -fp $pids)\n"
+      echo "Force stop (killing processes) with: $THIS stop $DEV force"
+      return
+    fi
+  fi
+  # ip netns del removes all interfaces within the namespace automatically
+  ip netns del $NAMESPACE &>/dev/null || true
+  rm -rf /etc/netns/$NAMESPACE &>/dev/null || true
   echo "$Y $DEV is now disconnected"
 }
 
 exec_in_namespace() {
-  [[ $# -eq 0 ]] && { echo "ERROR: No command specified"; show_usage; return 1; }
-  ip netns exec $NAMESPACE ip address show $DEV >/dev/null 2>&1 || {
-    echo "ERROR: $DEV VPN is not connected. Start it first with: $THIS start $DEV"
+  [[ $# -eq 0 ]] && { echo "$N ERROR: No command specified"; show_usage; return 1; }
+  is_connected || {
+    echo "$N ERROR: $DEV VPN is not connected. Start it first with: $THIS start $DEV"
     return 1
   }
   exec ip netns exec $NAMESPACE sudo -u "${SUDO_USER:-$USER}" "$@"
@@ -275,7 +290,7 @@ _wgc_completion() {
         vpns=$(
           while read -r ns x; do
             sudo ip netns exec "$ns" wg show "$ns" &>/dev/null && echo "$ns"
-          done 2>/dev/null < <(sudo ip netns list 2>/dev/null) )
+          done < <(sudo ip netns list 2>/dev/null) )
         COMPREPLY=( $(compgen -W "$vpns" -- "$cur") )
         ;;
     esac
@@ -326,6 +341,29 @@ To avoid sudo password prompt:
 EOF
 }
 
+clean() {
+  # If interface is not yet in namespace, delete it.
+  ip link del $DEV &>/dev/null || true
+  # Clean up any existing namespace and interface silently
+  ip netns del $NAMESPACE &>/dev/null || true
+  rm -rf /etc/netns/$NAMESPACE &>/dev/null || true
+  # Note: Processes that were in the deleted namespace lose network connectivity
+  # but continue running.
+}
+
+show_config() {
+  for k in Address PrivateKey PublicKey PresharedKey Endpoint AllowedIPs PersistentKeepalive; do
+    echo "$k=${!k}"
+  done
+  echo
+}
+
+validate_ipv4() {
+  local ip=$1
+  ip -4 rule add to "$ip" &>/dev/null || return 1
+  ip -4 rule del to "$ip" &>/dev/null || true
+}
+
 start_vpn() {
 
   # get parameters from config file named $DEV
@@ -337,26 +375,47 @@ start_vpn() {
     return 1
   fi
 
-  disconnect # Clean slate
+  clean # Clean slate - removes namespace, interface, DNS config
 
   # Create WireGuard interface
-  ip link add dev $DEV type wireguard
+  ip link add dev $DEV type wireguard || {
+    echo "$N ERROR: Failed to create WireGuard interface '$DEV'" >&2
+    return 1
+  }
 
   # Configure WireGuard
-  [[ $PresharedKey ]] && presharedkey='preshared-key <(echo "$PresharedKey")'
-  [[ $PersistentKeepalive ]] && persistentkeepalive='persistent-keepalive $PersistentKeepalive'
-  eval wg set $DEV \
-    private-key <(echo "$PrivateKey") \
-    peer "$PublicKey" $presharedkey \
-    allowed-ips "$AllowedIPs" \
-    endpoint $Endpoint \
-    $persistentkeepalive
+  local wgcmd='wg set $DEV'
+  wgcmd+=' private-key <(echo "$PrivateKey")'
+  wgcmd+=' peer "$PublicKey"'
+  wgcmd+=' allowed-ips "$AllowedIPs"'
+  wgcmd+=' endpoint "$Endpoint"'
+  [[ $PresharedKey ]] && wgcmd+=' preshared-key <(echo "$PresharedKey")'
+  [[ $PersistentKeepalive ]] && wgcmd+=' persistent-keepalive "$PersistentKeepalive"'
+  eval $wgcmd || {
+    echo "$N ERROR: Failed to configure WireGuard interface '$DEV' using command:" >&2
+    wgcmd=${wgcmd/\$PrivateKey/<HIDDEN>}
+    eval $'cat <<EOF\n'$wgcmd$'\nEOF'
+    clean
+    return 1
+  }
 
   # Create and configure namespace
-  ip netns add $NAMESPACE
-  ip link set $DEV netns $NAMESPACE
+  ip netns add $NAMESPACE || {
+    echo "$N ERROR: Failed to create namespace '$NAMESPACE'" >&2
+    clean
+    return 1
+  }
+  ip link set $DEV netns $NAMESPACE || {
+    echo "$N ERROR: Failed to move interface '$DEV' to namespace '$NAMESPACE'" >&2
+    clean
+    return 1
+  }
   ip netns exec $NAMESPACE ip link set lo up
-  ip netns exec $NAMESPACE ip addr add "$Address" dev $DEV
+  ip netns exec $NAMESPACE ip addr add "$Address" dev $DEV || {
+    echo "$N ERROR: Failed to configure address '$Address' for interface '$DEV'" >&2
+    clean
+    return 1
+  }
   [[ $MTU ]] && ip netns exec $NAMESPACE ip link set $DEV mtu $MTU
   ip netns exec $NAMESPACE ip link set $DEV up
   ip netns exec $NAMESPACE ip route add default dev $DEV
@@ -364,8 +423,16 @@ start_vpn() {
   # Configure DNS
   mkdir -p /etc/netns/$NAMESPACE
   for dns in $DNS; do
-    echo "nameserver $dns"
+    if validate_ipv4 "$dns"; then
+      echo "nameserver $dns"
+    else
+      echo "$N Warning: Skipping invalid DNS server '$dns'" >&2
+    fi
   done > /etc/netns/$NAMESPACE/resolv.conf
+  # Check if we have at least one DNS server
+  if [[ ! -s /etc/netns/$NAMESPACE/resolv.conf ]]; then
+    echo "$N Warning: No valid DNS servers configured" >&2
+  fi
 
   echo "$Y VPN connected successfully"
   echo
@@ -373,34 +440,57 @@ start_vpn() {
   echo
   echo "Network namespace: $NAMESPACE"
   echo
+  echo "Interface details:"
   ip netns exec $NAMESPACE ip -c addr show $DEV
   echo
+  echo "Routes:"
   ip netns exec $NAMESPACE ip -c route show
+  echo
+  echo "DNS:"
+  grep -E --color '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+    /etc/netns/$NAMESPACE/resolv.conf 2>/dev/null || echo "  (none)"
   echo
   echo "To run commands in the VPN namespace:"
   echo "  $THIS exec $NAMESPACE <command>"
   echo "  Example: $THIS exec $NAMESPACE curl ifconfig.me"
 }
 
+validate_vpn_name() {
+  case "$CMD" in
+    a*|l*|completion)
+      [[ -z "$DEV" ]] || { show_usage; return 1; }
+      ;;
+    *)
+      [[ $DEV =~ ^[a-zA-Z0-9_-]+$ ]] || {
+        echo "$N ERROR: Invalid VPN name '$DEV'. Use only alphanumeric, dash, underscore" >&2
+        return 1
+      }
+      ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
 set +e +x
 THIS=${0##*/}
+Y=$'\e[01;32m\u2713\e[m' # green CHECK MARK
+N=$'\e[01;31m\u2717\e[m' # red BALLOT X
+
 check_dependencies || exit 1
+
+CMD=$1
 DEV=$2
 NAMESPACE=$DEV
-N=$'\e[01;31m✗\e[m'
-Y=$'\e[01;32m✓\e[m'
 
-case "$1" in
+validate_vpn_name || exit 1
+
+case "$CMD" in
   star|start)
-    [[ $2 ]] || { show_usage; exit 1; }
     start_vpn
     ;;
   sto|stop)
-    [[ $2 ]] || { show_usage; exit 1; }
-    stop_vpn
+    stop_vpn $3 # $3 can be "force"
     ;;
   stat|statu|status)
-    [[ $2 ]] || { show_usage; exit 1; }
     show_status
     ;;
   a|ac|act|acti|activ|active)
@@ -410,7 +500,6 @@ case "$1" in
     list_config_files
     ;;
   e|ex|exe|exec)
-    [[ $2 ]] || { show_usage; exit 1; }
     shift; shift
     exec_in_namespace "$@"
     ;;
