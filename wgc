@@ -236,8 +236,10 @@ stop_vpn() {
     fi
   fi
   # ip netns del removes all interfaces within the namespace automatically
-  ip netns del $NAMESPACE &>/dev/null || true
+  # anyways, better be explicit
   rm -rf /etc/netns/$NAMESPACE &>/dev/null || true
+  ip netns exec $NAMESPACE ip link del $DEV &>/dev/null || true
+  ip netns del $NAMESPACE &>/dev/null || true
   echo "$Y $DEV is now disconnected"
 }
 
