@@ -53,11 +53,11 @@ Lo script analizza il file e si aspetta le chiavi standard di WireGuard.
 * **Chiavi Obbligatorie:** Lo script terminerà se manca una qualsiasi di queste chiavi:
   * `Address`
   * `PrivateKey`
-  * `DNS`
   * `PublicKey`
   * `Endpoint`
   * `AllowedIPs`
 * **Chiavi Opzionali:** Lo script supporta anche:
+  * `DNS`
   * `MTU`
   * `PresharedKey`
   * `PersistentKeepalive`

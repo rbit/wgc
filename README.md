@@ -53,11 +53,11 @@ The script parses the file and expects standard WireGuard keys.
 * **Required Keys:** The script will exit if any key of these is missing:
   * `Address` 
   * `PrivateKey` 
-  * `DNS` 
   * `PublicKey` 
   * `Endpoint` 
   * `AllowedIPs` 
 * **Optional Keys:** The script also supports:
+  * `DNS`
   * `MTU` 
   * `PresharedKey` 
   * `PersistentKeepalive` 
