@@ -67,13 +67,14 @@ parse_config_file() {
   local CONFIG_FILE="/etc/wireguard/$1.conf"
   [[ -f "$CONFIG_FILE" ]] || { echo "$N Config file not found: $CONFIG_FILE"; return 1; }
   [[ -r "$CONFIG_FILE" ]] || { echo "$N Can't read file: $CONFIG_FILE"; return 1; }
-  local line n=0 section key value
+  local line n=0 s section key value
   WARNINGS=; BADSECTION=
   while read -r line || [[ -n "$line" ]]; do # also read last line if \n is missing
       ((n++))
       line="${line%%#*}" # Remove comments
       if [[ "$line" =~ ^[[:space:]]*(\[[A-Za-z0-9]+\])[[:space:]]*$ ]]; then
         section="${BASH_REMATCH[1]}" # Track section
+        s=$n # remember section line number
         continue
       fi
       # Skip lines in bad sections (even before all sections)
@@ -126,7 +127,7 @@ process_config_line() {
       ;;
     *)
       BADSECTION=$section
-      WARNINGS+="\nUnknown section '$section' at line $((n-1))"
+      WARNINGS+="\nUnknown section '$section' at line $s"
       ;;
   esac
 }
@@ -346,7 +347,9 @@ EOF
 clean() {
   # If interface is not yet in namespace, delete it.
   ip link del $DEV &>/dev/null || true
-  # Clean up any existing namespace and interface silently
+  # If interface is in namespace, delete it.
+  ip netns exec $NAMESPACE ip link del $DEV &>/dev/null || true
+  # Remove namespace
   ip netns del $NAMESPACE &>/dev/null || true
   rm -rf /etc/netns/$NAMESPACE &>/dev/null || true
   # Note: Processes that were in the deleted namespace lose network connectivity
