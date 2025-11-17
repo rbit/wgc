@@ -21,16 +21,18 @@
 
 show_usage() {
   cat <<EOF
-Usage: $THIS [start <vpn>|stop <vpn>|status <vpn>|active|list|exec <vpn> <command>]
+Usage: $THIS [-c|--cfgdir config_dir] [start <vpn>|stop <vpn>|status <vpn>|active|list|exec <vpn> <command>]
 
-<vpn> should match the config file name /etc/wireguard/<vpn>.conf
+If omitted, config_dir defaults to /etc/wireguard
+
+<vpn> should match the config file name config_dir/<vpn>.conf
 
 Commands:
   start  - Start the VPN connection
   stop   - Stop the VPN connection
   status - Show VPN connection status
   active - Show active VPN namespaces
-  list   - List config files in /etc/wireguard/
+  list   - List config files in config_dir
   exec   - Execute a command in the VPN namespace
            Example: $THIS <vpn> exec curl ifconfig.me
 
@@ -54,8 +56,8 @@ list_config_files() {
   local f
   printf "%-12s %-18s %-18s %s\n" "Name" "Address" "AllowedIPs" "Endpoint"
   printf "%-12s %-18s %-18s %s\n" "----" "-------" "----------" "--------"
-  for f in /etc/wireguard/*.conf; do
-    [[ "$f" == "/etc/wireguard/*.conf" ]] && return 0
+  for f in "$CFGDIR"/*.conf; do
+    [[ "$f" == "$CFGDIR/*.conf" ]] && return 0
     f=${f##*/}; f=${f%.*}
     [[ $f =~ wg[0-9]+ ]] && continue # exclude wg0, wg1, wg2 ...
     parse_config_file "$f" || return 1
@@ -64,7 +66,7 @@ list_config_files() {
 }
 
 parse_config_file() {
-  local CONFIG_FILE="/etc/wireguard/$1.conf"
+  local CONFIG_FILE="$CFGDIR/$1.conf"
   [[ -f "$CONFIG_FILE" ]] || { echo "$N Config file not found: $CONFIG_FILE"; return 1; }
   [[ -r "$CONFIG_FILE" ]] || { echo "$N Can't read file: $CONFIG_FILE"; return 1; }
   local line n=0 s section key value
@@ -479,8 +481,33 @@ set +e +x
 THIS=${0##*/}
 Y=$'\e[01;32m\u2713\e[m' # green CHECK MARK
 N=$'\e[01;31m\u2717\e[m' # red BALLOT X
+CFGDIR=/etc/wireguard
 
 check_dependencies || exit 1
+
+LONGOPTIONS=
+LONGOPTIONS+=cfgdir
+
+declare -r LONGOPTIONS
+
+OPTS="$(getopt -o c: --longoptions $LONGOPTIONS -- "$@")" || { show_usage && exit 1; }
+eval set -- "$OPTS"
+unset OPTS
+
+while [[ -v 1 ]]; do
+  case "$1" in
+    -c | --cfgdir)
+      CFGDIR=$2
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+  esac
+done
+
+declare -r CFGDIR
 
 CMD=$1
 DEV=$2
