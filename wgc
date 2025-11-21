@@ -17,11 +17,9 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-[[ $UID == 0 ]] || exec sudo "$0" "$@"
-
 show_usage() {
   cat <<EOF
-Usage: $THIS [-c|--cfgdir config_dir] [-p|--prvkey private_key] [start <vpn>|stop <vpn>|status <vpn>|active|list|exec <vpn> <command>]
+Usage: $THIS [-c|--cfgdir config_dir] [-p|--prvkey private_key_file] [start <vpn>|stop <vpn>|status <vpn>|active|list|exec <vpn> <command>]
 
 If omitted, config_dir defaults to /etc/wireguard
 If omitted, private_key must be given in the config file
@@ -253,7 +251,7 @@ exec_in_namespace() {
     echo "$N ERROR: $DEV VPN is not connected. Start it first with: $THIS start $DEV"
     return 1
   }
-  exec ip netns exec $NAMESPACE sudo -u "${SUDO_USER:-$USER}" "$@"
+  exec ip netns exec $NAMESPACE sudo -E -u "${SUDO_USER:-$USER}" "$@"
 }
 
 enable_completion() {
@@ -479,18 +477,29 @@ validate_vpn_name() {
   esac
 }
 
+ensure_root() {
+  if [[ $UID != 0 ]]; then
+    export WGC_CFGDIR=$CFGDIR
+    export WGC_PRVKEY=$PrivateKey
+    PRG=$1
+    shift
+    exec sudo -E "$PRG" -- "$@"
+  fi
+}
+
 # -----------------------------------------------------------------------------
 set +e +x
 THIS=${0##*/}
 Y=$'\e[01;32m\u2713\e[m' # green CHECK MARK
 N=$'\e[01;31m\u2717\e[m' # red BALLOT X
-CFGDIR=/etc/wireguard
+CFGDIR=${WGC_CFGDIR:-/etc/wireguard}
+PrivateKey=${WGC_PRVKEY:-}
 
 check_dependencies || exit 1
 
 LONGOPTIONS=
 LONGOPTIONS+=cfgdir
-LONGOPTIONS+=,prvkey
+LONGOPTIONS+=,prvkeyfile
 
 declare -r LONGOPTIONS
 
@@ -504,8 +513,8 @@ while [[ -v 1 ]]; do
       CFGDIR=$2
       shift 2
       ;;
-    -p | --prvkey)
-      PrivateKey=$2
+    -p | --prvkeyfile)
+      PrivateKey=$(cat $2)
       shift 2
       ;;
     --)
@@ -525,21 +534,26 @@ validate_vpn_name || exit 1
 
 case "$CMD" in
   star|start)
+    ensure_root "$0" "$@"
     start_vpn
     ;;
   sto|stop)
+    ensure_root "$0" "$@"
     stop_vpn $3 # $3 can be "force"
     ;;
   stat|statu|status)
+    ensure_root "$0" "$@"
     show_status
     ;;
   a|ac|act|acti|activ|active)
+    ensure_root "$0" "$@"
     show_active_vpns
     ;;
   l|li|lis|list)
     list_config_files
     ;;
   e|ex|exe|exec)
+    ensure_root "$0" "$@"
     shift; shift
     exec_in_namespace "$@"
     ;;
