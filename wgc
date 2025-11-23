@@ -53,14 +53,14 @@ check_dependencies() {
 
 list_config_files() {
   local f
-  printf "%-12s %-18s %-18s %s\n" "Name" "Address" "AllowedIPs" "Endpoint"
-  printf "%-12s %-18s %-18s %s\n" "----" "-------" "----------" "--------"
+  printf "%-12s %-28s %-18s %s\n" "Name" "Addresses" "AllowedIPs" "Endpoint"
+  printf "%-12s %-28s %-18s %s\n" "----" "---------" "----------" "--------"
   for f in "$CFGDIR"/*.conf; do
     [[ "$f" == "$CFGDIR/*.conf" ]] && return 0
     f=${f##*/}; f=${f%.*}
     [[ $f =~ wg[0-9]+ ]] && continue # exclude wg0, wg1, wg2 ...
     parse_config_file "$f" || return 1
-    printf "%-12s %-18s %-18s %s\n" "$f" "$Address" "$AllowedIPs" "$Endpoint"
+    printf "%-12s %-28s %-18s %s\n" "$f" "$Address" "$AllowedIPs" "$Endpoint"
   done
 }
 
@@ -109,8 +109,8 @@ process_config_line() {
   case "$section" in
     "[Interface]")
       case "$key" in
-        Address) Address=$(extract_ipv4 "$value") ;;
-        DNS) DNS=$(extract_all_ipv4 "$value") ;;
+        Address) Address=$(extract_all_ips "$value") ;;
+        DNS) DNS=$(extract_all_ips "$value") ;;
         MTU) MTU="$value" ;;
         PrivateKey) PrivateKey="$value" ;;
         *) WARNINGS+="\nUnknown key '$key' in section '$section' at line $n" ;;
@@ -118,7 +118,7 @@ process_config_line() {
       ;;
     "[Peer]")
       case "$key" in
-        AllowedIPs) AllowedIPs=$(extract_ipv4 "$value") ;;
+        AllowedIPs) AllowedIPs=$(extract_all_ips "$value") ;;
         Endpoint) Endpoint="$value" ;;
         PersistentKeepalive) PersistentKeepalive="$value" ;;
         PresharedKey) PresharedKey="$value" ;;
@@ -133,23 +133,36 @@ process_config_line() {
   esac
 }
 
-extract_ipv4() {
-  local input="$1"
-  local regex='([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?'
-  if [[ $input =~ $regex ]]; then
-    echo "${BASH_REMATCH[0]}"
-  fi
-}
-
-extract_all_ipv4() {
+extract_all_ips() {
   local input="$1"
   local result=""
-  local regex='([0-9]{1,3}\.){3}[0-9]{1,3}'
-  while [[ $input =~ $regex ]]; do
+  local ipv4_regex='([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]+)?'
+  local ip6sg='[0-9a-fA-F]{1,4}'
+  local ipv6_regex=
+  ipv6_regex+="(($ip6sg:){7}$ip6sg"
+  ipv6_regex+="|($ip6sg:){1,7}:"
+  ipv6_regex+="|($ip6sg:){1,6}:$ip6sg"
+  ipv6_regex+="|($ip6sg:){1,5}(:$ip6sg){1,2}"
+  ipv6_regex+="|($ip6sg:){1,4}(:$ip6sg){1,3}"
+  ipv6_regex+="|($ip6sg:){1,3}(:$ip6sg){1,4}"
+  ipv6_regex+="|($ip6sg:){1,2}(:$ip6sg){1,5}"
+  ipv6_regex+="|$ip6sg:(:$ip6sg){1,6}"
+  ipv6_regex+="|::($ip6sg:){0,6}$ip6sg"
+  ipv6_regex+='|::)'
+  ipv6_regex+='(/[0-9]+)?'
+
+  # Extract IPv4 addresses
+  while [[ $input =~ $ipv4_regex ]]; do
     result="$result${BASH_REMATCH[0]} "
-    # Remove found match and go on
     input="${input/"${BASH_REMATCH[0]}"/}"
   done
+
+  # Extract IPv6 addresses
+  while [[ $input =~ $ipv6_regex ]]; do
+    result="$result${BASH_REMATCH[0]} "
+    input="${input/"${BASH_REMATCH[0]}"/}"
+  done
+
   # Remove final space
   echo "${result% }"
 }
@@ -167,11 +180,14 @@ show_status() {
     echo "Interface details:"
     ip netns exec $NAMESPACE ip -c addr show $DEV
     echo
-    echo "Routes:"
+    echo "IPv4 Routes:"
     ip netns exec $NAMESPACE ip -c route show
     echo
+    echo "IPv6 Routes:"
+    ip netns exec $NAMESPACE ip -c -6 route show
+    echo
     echo "DNS:"
-    grep -E --color '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+    grep -E --color ' .+' \
       /etc/netns/$NAMESPACE/resolv.conf 2>/dev/null || echo "  (none)"
     echo
     echo "Processes running in namespace $NAMESPACE:"
@@ -364,12 +380,6 @@ show_config() {
   echo
 }
 
-validate_ipv4() {
-  local ip=$1
-  ip -4 rule add to "$ip" &>/dev/null || return 1
-  ip -4 rule del to "$ip" &>/dev/null || true
-}
-
 start_vpn() {
 
   # get parameters from config file named $DEV
@@ -395,7 +405,7 @@ start_vpn() {
   local wgcmd='wg set $DEV'
   wgcmd+=' private-key <(echo "$PrivateKey")'
   wgcmd+=' peer "$PublicKey"'
-  wgcmd+=' allowed-ips "$AllowedIPs"'
+  wgcmd+=' allowed-ips "$(sed "s/ /,/g" <<<$AllowedIPs)"'
   wgcmd+=' endpoint "$Endpoint"'
   [[ $PresharedKey ]] && wgcmd+=' preshared-key <(echo "$PresharedKey")'
   [[ $PersistentKeepalive ]] && wgcmd+=' persistent-keepalive "$PersistentKeepalive"'
@@ -419,23 +429,22 @@ start_vpn() {
     return 1
   }
   ip netns exec $NAMESPACE ip link set lo up
-  ip netns exec $NAMESPACE ip addr add "$Address" dev $DEV || {
-    echo "$N ERROR: Failed to configure address '$Address' for interface '$DEV'" >&2
-    clean
-    return 1
-  }
+  for addr in $Address; do
+    ip netns exec $NAMESPACE ip addr add "$addr" dev $DEV || {
+      echo "$N ERROR: Failed to configure address '$addr' for interface '$DEV'" >&2
+      clean
+      return 1
+    }
+  done
   [[ $MTU ]] && ip netns exec $NAMESPACE ip link set $DEV mtu $MTU
   ip netns exec $NAMESPACE ip link set $DEV up
   ip netns exec $NAMESPACE ip route add default dev $DEV
+  ip netns exec $NAMESPACE ip -6 route add default dev $DEV
 
   # Configure DNS
   mkdir -p /etc/netns/$NAMESPACE
   for dns in $DNS; do
-    if validate_ipv4 "$dns"; then
-      echo "nameserver $dns"
-    else
-      echo "$N Warning: Skipping invalid DNS server '$dns'" >&2
-    fi
+    echo "nameserver $dns"
   done > /etc/netns/$NAMESPACE/resolv.conf
   # Check if we have at least one DNS server
   if [[ ! -s /etc/netns/$NAMESPACE/resolv.conf ]]; then
@@ -451,11 +460,14 @@ start_vpn() {
   echo "Interface details:"
   ip netns exec $NAMESPACE ip -c addr show $DEV
   echo
-  echo "Routes:"
+  echo "IPv4 Routes:"
   ip netns exec $NAMESPACE ip -c route show
   echo
+  echo "IPv6 Routes:"
+  ip netns exec $NAMESPACE ip -c -6 route show
+  echo
   echo "DNS:"
-  grep -E --color '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+  grep -E --color ' .+' \
     /etc/netns/$NAMESPACE/resolv.conf 2>/dev/null || echo "  (none)"
   echo
   echo "To run commands in the VPN namespace:"
