@@ -382,17 +382,10 @@ start_vpn() {
 }
 
 validate_vpn_name() {
-  case "$CMD" in
-    a*|l*|completion)
-      [[ -z "$DEV" ]] || { show_usage; return 1; }
-      ;;
-    *)
-      [[ $DEV =~ ^[a-zA-Z0-9_-]+$ ]] || {
-        echo "$N ERROR: Invalid VPN name '$DEV'. Use only alphanumeric, dash, underscore" >&2
-        return 1
-      }
-      ;;
-  esac
+  [[ $DEV =~ ^[a-zA-Z0-9_-]+$ ]] || {
+    echo "$N ERROR: Invalid VPN name '$DEV'. Use only alphanumeric, dash, underscore" >&2
+    return 1
+  }
 }
 
 ensure_root() {
@@ -407,9 +400,9 @@ ensure_root() {
 
 # -----------------------------------------------------------------------------
 set +e +x
-THIS=${0##*/}
-Y=$'\e[01;32m\u2713\e[m' # green CHECK MARK
-N=$'\e[01;31m\u2717\e[m' # red BALLOT X
+declare -r THIS=${0##*/}
+declare -r Y=$'\e[01;32m\u2713\e[m' # green CHECK MARK
+declare -r N=$'\e[01;31m\u2717\e[m' # red BALLOT X
 CFGDIR=${WGC_CFGDIR:-/etc/wireguard}
 PrivateKey=${WGC_PRVKEY:-}
 
@@ -448,44 +441,44 @@ while [[ -v 1 ]]; do
 done
 
 declare -r CFGDIR
-
-[[ -v 1 ]] || { show_usage && exit 1; }
-
-CMD=$1
-DEV=$2
-NAMESPACE=$DEV
-
-validate_vpn_name || exit 1
+declare -r PrivateKey
+declare -r CMD=$1
+declare -r DEV=$2
+declare -r NAMESPACE=$DEV
 
 case "$CMD" in
   star|start)
+    validate_vpn_name || exit 1
     ensure_root "$0" "$@"
     start_vpn
     ;;
   sto|stop)
+    validate_vpn_name || exit 1
     ensure_root "$0" "$@"
     stop_vpn $3 # $3 can be "force"
     ;;
   stat|statu|status)
+    validate_vpn_name || exit 1
     ensure_root "$0" "$@"
     show_status
     ;;
   a|ac|act|acti|activ|active)
+    [[ -z "$DEV" ]] || { show_usage && exit 1; }
     ensure_root "$0" "$@"
     show_active_vpns
     ;;
   l|li|lis|list)
+    [[ -z "$DEV" ]] || { show_usage && exit 1; }
     list_config_files
     ;;
   e|ex|exe|exec)
+    validate_vpn_name || exit 1
     ensure_root "$0" "$@"
     shift; shift
     exec_in_namespace "$@"
     ;;
-  completion)
-    enable_completion
-    ;;
   *)
     show_usage
+    exit 1
     ;;
 esac
