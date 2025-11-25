@@ -430,7 +430,7 @@ while [[ -v 1 ]]; do
       shift 2
       ;;
     -p | --prvkeyfile)
-      PrivateKey=$(cat $2)
+      PrivateKey=$(< "$2")
       shift 2
       ;;
     --)
@@ -441,7 +441,6 @@ while [[ -v 1 ]]; do
 done
 
 declare -r CFGDIR
-declare -r PrivateKey
 declare -r CMD=$1
 declare -r DEV=$2
 declare -r NAMESPACE=$DEV
