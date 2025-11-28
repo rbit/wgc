@@ -265,7 +265,11 @@ exec_in_namespace() {
     echo "$N ERROR: $DEV VPN is not connected. Start it first with: $THIS start $DEV"
     return 1
   }
-  exec ip netns exec $NAMESPACE sudo -E -u "${SUDO_USER:-$USER}" "$@"
+  local CMD_ALL=(sudo -E -u "${SUDO_USER:-$USER}" "$@")
+  if [[ -f /etc/netns/$NAMESPACE/resolv.conf && -S /var/run/nscd/socket ]]; then
+    CMD_ALL=(unshare -m bash -c "mount --bind /var/empty /var/run/nscd && ${CMD_ALL[*]@Q}")
+  fi
+  exec ip netns exec $NAMESPACE "${CMD_ALL[@]}"
 }
 
 clean() {
